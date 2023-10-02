@@ -27,6 +27,7 @@ func NewQueue[T any]() *Queue[T] {
 		size: 0,
 	}
 }
+
 func (q *Queue[T]) Enqueue(value T) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -52,7 +53,7 @@ func (q *Queue[T]) Enqueue(value T) {
 // If the queue is empty, it returns the default value and false.
 // Otherwise, it returns the value from the queue's head and true.
 //
-// Usage Example:
+// Example:
 //
 //	// Create a new queue
 //	q := NewQueue[int]()
@@ -120,10 +121,9 @@ func (q *Queue[T]) Peek() (T, bool) {
 func (q *Queue[T]) ForEach(callback func(n *node[T])) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
-	head := q.head
-	for head != nil {
+
+	for head := q.head; head != nil; head = head.next {
 		callback(head)
-		head = head.next
 	}
 }
 

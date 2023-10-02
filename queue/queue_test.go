@@ -154,25 +154,61 @@ func TestQueue_Enqueue(t *testing.T) {
 			}
 		})
 	}
+	t.Run("Enqueue one element in queue", func(t *testing.T) {
+		q := &Queue[int]{&sync.RWMutex{}, nil, nil, 0}
+		q.Enqueue(1)
+		q.Enqueue(2)
+
+		queueWant := "[1 2]"
+		if q.size != 2 {
+			t.Errorf("Expected empty queue after Clear, but got size %d", q.size)
+		}
+		if queueWant != queueToString[int](q) {
+			t.Errorf("Expected queue %v, but got %v", queueWant, queueToString(q))
+		}
+	})
+	t.Run("Enqueue and Dequeue and again Enqueue", func(t *testing.T) {
+		q := &Queue[int]{&sync.RWMutex{}, nil, nil, 0}
+		q.Enqueue(1)
+		q.Enqueue(2)
+		q.Dequeue()
+		q.Enqueue(3)
+		queueWant := "[2 3]"
+		if q.size != 2 {
+			t.Errorf("Expected empty queue after Clear, but got size %d", q.size)
+		}
+		if queueWant != queueToString[int](q) {
+			t.Errorf("Expected queue %v, but got %v", queueWant, queueToString(q))
+		}
+	})
 }
 
 func TestQueue_ForEach(t *testing.T) {
-	type args[T any] struct {
-		callback func(n *node[T])
-	}
-	type testCase[T any] struct {
-		name string
-		q    Queue[T]
-		args args[T]
-	}
-	tests := []testCase[int]{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.q.ForEach(tt.args.callback)
+	t.Run("one element in que", func(t *testing.T) {
+		q := &Queue[int]{&sync.RWMutex{}, nil, nil, 0}
+		q.Enqueue(1)
+		sum := 0
+		q.ForEach(func(n *node[int]) {
+			sum += n.value
 		})
-	}
+		if sum != 1 {
+			t.Errorf("Expected %d, but got %d", 1, sum)
+		}
+	})
+	t.Run("four element in que", func(t *testing.T) {
+		q := &Queue[int]{&sync.RWMutex{}, nil, nil, 0}
+		q.Enqueue(1)
+		q.Enqueue(2)
+		q.Enqueue(3)
+		q.Enqueue(4)
+		sum := 0
+		q.ForEach(func(n *node[int]) {
+			sum += n.value
+		})
+		if sum != 10 {
+			t.Errorf("Expected %d, but got %d", 10, sum)
+		}
+	})
 }
 
 func TestQueue_IsEmpty(t *testing.T) {
