@@ -1,11 +1,28 @@
 package queue
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
 
+func queueToString[T any](queue *Queue[T]) string {
+	var sb strings.Builder
+	curr := queue.head
+	sb.WriteByte('[')
+	for curr != nil {
+		if curr == queue.head {
+			sb.WriteString(fmt.Sprintf("%v", curr.value))
+		} else {
+			sb.WriteString(fmt.Sprintf(" %v", curr.value))
+		}
+		curr = curr.next
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
 func TestNewQueue(t *testing.T) {
 	type testCase[T any] struct {
 		name string
@@ -115,16 +132,26 @@ func TestQueue_Enqueue(t *testing.T) {
 		value T
 	}
 	type testCase[T any] struct {
-		name string
-		q    Queue[T]
-		args args[T]
+		name      string
+		q         *Queue[T]
+		args      args[T]
+		sizeWant  int
+		queueWant string
 	}
 	tests := []testCase[int]{
-		// TODO: Add test cases.
+		{"Enqueue empty queue", &Queue[int]{&sync.RWMutex{}, nil, nil, 0},
+			args[int]{1}, 1, "[1]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.q.Enqueue(tt.args.value)
+			if tt.q.size != tt.sizeWant {
+				t.Errorf("Expected empty queue after Clear, but got size %d", tt.q.size)
+			}
+			if tt.queueWant != queueToString[int](tt.q) {
+				t.Errorf("Expected queue %v, but got %v", tt.queueWant, queueToString(tt.q))
+
+			}
 		})
 	}
 }

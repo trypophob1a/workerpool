@@ -129,9 +129,10 @@ func (q *Queue[T]) ForEach(callback func(n *node[T])) {
 
 func (q *Queue[T]) String() string {
 	var sb strings.Builder
+	sb.WriteRune('[')
 	q.ForEach(func(n *node[T]) {
 		if n == q.head {
-			sb.WriteString(fmt.Sprintf("[%v", n.value))
+			sb.WriteString(fmt.Sprintf("%v", n.value))
 		} else {
 			sb.WriteString(fmt.Sprintf(" %v", n.value))
 		}
