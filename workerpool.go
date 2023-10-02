@@ -1,7 +1,10 @@
 package workerpool
 
 import (
+	"context"
 	"sync"
+
+	"github.com/trypophob1a/workerpool/queue"
 )
 
 type Result[T any] struct {
@@ -9,65 +12,60 @@ type Result[T any] struct {
 	Error error
 }
 
-type Task[T any] struct {
-	Process func() Result[T]
-}
-
-func NewTask[T any](process func() Result[T]) *Task[T] {
-	return &Task[T]{Process: process}
-}
-
-func NewResult[T any]() Result[T] {
-	return Result[T]{}
-}
+type Task[T any] func() Result[T]
 
 type WorkerPool[T any] struct {
-	workersCount int
-	wg           *sync.WaitGroup
-	results      chan Result[T]
-	tasks        chan *Task[T]
+	ctx     context.Context
+	wc      int
+	tasks   *queue.Queue[Task[T]]
+	wg      *sync.WaitGroup
+	results chan Result[T]
 }
 
-func NewWorkerPool[T any](workersCount int, tasks chan *Task[T]) *WorkerPool[T] {
-	pool := &WorkerPool[T]{
-		workersCount: workersCount,
-		results:      make(chan Result[T], workersCount),
-		tasks:        tasks,
-		wg:           &sync.WaitGroup{},
+func New[T any](ctx context.Context, workerCount int) *WorkerPool[T] {
+	return &WorkerPool[T]{
+		ctx:     ctx,
+		wc:      workerCount,
+		tasks:   queue.NewQueue[Task[T]](),
+		wg:      &sync.WaitGroup{},
+		results: make(chan Result[T], workerCount),
 	}
-	pool.Run()
-	return pool
 }
 
-func (w *WorkerPool[T]) Add(task *Task[T]) {
-	w.tasks <- task
-}
-func (w *WorkerPool[T]) worker() {
-	for task := range w.tasks {
-		w.results <- task.Process()
+func (p *WorkerPool[T]) Run() {
+	for i := 0; i < p.wc; i++ {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.drainQueue()
+		}()
 	}
 }
-func (w *WorkerPool[T]) Close() {
-	close(w.tasks)
-}
-func (w *WorkerPool[T]) Run() {
-	// Создание воркеров
-	for i := 0; i < w.workersCount; i++ {
-		w.wg.Add(1)
-		go func(id int) {
-			defer w.wg.Done()
-			w.worker()
-		}(i)
-	}
 
+func (p *WorkerPool[T]) Add(task Task[T]) {
+	p.tasks.Enqueue(task)
 }
-func (w *WorkerPool[T]) Wait(callback func(Result[T])) {
-	close(w.tasks)
+
+func (p *WorkerPool[T]) Wait(callback func(result Result[T])) {
 	go func() {
-		w.wg.Wait()
-		close(w.results)
+		p.wg.Wait()
+		close(p.results)
 	}()
-	for result := range w.results {
-		callback(result)
+	for r := range p.results {
+		callback(r)
+	}
+}
+
+func (p *WorkerPool[T]) drainQueue() {
+	for {
+		if p.ctx.Err() != nil {
+			return
+		}
+
+		task, ok := p.tasks.Dequeue()
+		if !ok {
+			return
+		}
+		p.results <- task()
 	}
 }
