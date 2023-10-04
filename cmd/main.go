@@ -2,129 +2,108 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 )
 
-type result struct {
-	Ok  int
-	Err error
+type Result[T any] struct {
+	Ok    T
+	Error error
 }
 
-type que struct {
-	mu *sync.Mutex
-	q  []task
+type Task[T any] struct {
+	Result Result[T]
+	Exec   func() Result[T]
 }
 
-func newQue() *que {
-	return &que{
-		mu: &sync.Mutex{},
-		q:  make([]task, 0),
+func NewTask[T any](exec func() Result[T]) Task[T] {
+	return Task[T]{Exec: exec}
+}
+
+type WorkerPool[T any] struct {
+	workerCount int
+	wg          *sync.WaitGroup
+	ctx         context.Context
+	tasks       chan Task[T]
+}
+
+func NewWorkerPool[T any](ctx context.Context, workerCount int) *WorkerPool[T] {
+	return &WorkerPool[T]{
+		workerCount: workerCount,
+		wg:          &sync.WaitGroup{},
+		ctx:         ctx,
+		tasks:       make(chan Task[T]),
 	}
 }
 
-func (q *que) push(t task) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.q = append(q.q, t)
-}
-
-func (q *que) pop() (task, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.q) == 0 {
-		return nil, false
-	}
-	t := q.q[0]
-	q.q = q.q[1:]
-	return t, true
-}
-
-type task func() result
-
-type pool struct {
-	wg      *sync.WaitGroup
-	tasks   *que
-	results chan result
-	wc      int
-	ctx     context.Context
-}
-
-func newPool(ctx context.Context, wc int) *pool {
-	return &pool{
-		tasks:   newQue(),
-		wg:      &sync.WaitGroup{},
-		results: make(chan result),
-		wc:      wc,
-		ctx:     ctx,
-	}
-}
-
-func (p *pool) push(t task) {
-	p.tasks.push(t)
-}
-func (p *pool) worker() error {
-	if err := p.ctx.Err(); err != nil {
-		println("cancel")
-		return err
-	}
-
-	t, ok := p.tasks.pop()
-	if !ok {
-		return fmt.Errorf("queue is empty")
-	}
-	p.results <- t()
-	return nil
-}
-
-func (p *pool) run() {
-	for i := 0; i < p.wc; i++ {
+func (p *WorkerPool[T]) Run() {
+	for i := 1; i <= p.workerCount; i++ {
 		p.wg.Add(1)
-		go func() {
-			defer p.wg.Done()
-			for {
-				err := p.worker()
-				if err != nil {
-					return
-				}
-			}
-		}()
+		go p.worker()
 	}
 }
 
-func (p *pool) wait(callback func(result result)) {
-	go func() {
-		p.wg.Wait()
-		close(p.results)
-	}()
-	for r := range p.results {
-		callback(r)
+func (p *WorkerPool[T]) Add(task Task[T]) {
+	if p.ctx.Err() != nil {
+		return
+	}
+	p.tasks <- task
+}
+
+func (p *WorkerPool[T]) Wait() {
+	close(p.tasks)
+	p.wg.Wait()
+}
+
+func (p *WorkerPool[T]) Result() Result[T] {
+	if p.ctx.Err() != nil {
+		return Result[T]{Error: p.ctx.Err()}
+	}
+	res := <-p.tasks
+	return res.Result
+}
+
+func (p *WorkerPool[T]) Task() <-chan Task[T] {
+	return p.tasks
+}
+
+func (p *WorkerPool[T]) worker() {
+	defer p.wg.Done()
+
+	for task := range p.tasks {
+		if p.ctx.Err() != nil {
+			return
+		}
+		task.Result = task.Exec()
+		p.tasks <- task
 	}
 }
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
-
-	p := newPool(ctx, 2)
-	p.run()
-	for i := 0; i <= 35; i++ {
-		index := i
-		p.push(func() result {
-			r := result{}
-			if index%2 == 0 {
-				r.Ok = index
-			} else {
-				r.Err = fmt.Errorf("error: %d", index)
-			}
-			return r
+	pool := NewWorkerPool[int](ctx, 2)
+	pool.Run()
+	for i := 1; i <= 15; i++ {
+		i := i
+		task := NewTask[int](func() Result[int] {
+			fmt.Printf("gorutines count: %v\n", runtime.NumGoroutine())
+			return Result[int]{Ok: i, Error: nil}
 		})
-	}
+		pool.Add(task)
 
-	p.wait(func(r result) {
-		fmt.Printf("ok: %v, err: %v\n", r.Ok, r.Err)
-		if r.Ok == 18 {
+		result := pool.Result()
+		if errors.Is(result.Error, context.Canceled) {
+			continue
+		}
+		fmt.Printf("Получен результат обработки задачи %d\n", result.Ok)
+		if result.Ok == 5 {
 			cancel()
 		}
-	})
-	fmt.Printf("end last gorutines: %d\n", runtime.NumGoroutine())
+	}
+	pool.Wait()
+	time.Sleep(15 * time.Second)
+	fmt.Printf("end work main\ngorutines count: %v\n", runtime.NumGoroutine())
 }
