@@ -54,8 +54,8 @@ func TestQueue_Clear(t *testing.T) {
 	})
 
 	t.Run("Clear non-empty queue", func(t *testing.T) {
-		head := &node[int]{value: 1, next: nil, prev: nil}
-		tail := &node[int]{value: 2, next: nil, prev: head}
+		head := &Node[int]{value: 1, next: nil, prev: nil}
+		tail := &Node[int]{value: 2, next: nil, prev: head}
 		head.next = tail
 		q := &Queue[int]{&sync.RWMutex{}, head, tail, 2}
 		q.Clear()
@@ -76,8 +76,8 @@ func TestQueue_Dequeue(t *testing.T) {
 		ok   bool
 		size int
 	}
-	head := &node[int]{value: 1, next: nil, prev: nil}
-	tail := &node[int]{value: 2, next: nil, prev: head}
+	head := &Node[int]{value: 1, next: nil, prev: nil}
+	tail := &Node[int]{value: 2, next: nil, prev: head}
 	head.next = tail
 	queueTwoElements := &Queue[int]{&sync.RWMutex{}, head, tail, 2}
 	tests := []testCase[int]{
@@ -86,7 +86,7 @@ func TestQueue_Dequeue(t *testing.T) {
 			0, false, 0,
 		},
 		{"Dequeue one element in queue",
-			&Queue[int]{&sync.RWMutex{}, &node[int]{value: 1, next: nil, prev: nil}, nil, 1},
+			&Queue[int]{&sync.RWMutex{}, &Node[int]{value: 1, next: nil, prev: nil}, nil, 1},
 			1, true, 0,
 		},
 		{"Dequeue two elements in queue",
@@ -110,9 +110,9 @@ func TestQueue_Dequeue(t *testing.T) {
 	}
 
 	t.Run("Dequeue three elements in queue", func(t *testing.T) {
-		head := &node[int]{value: 1, next: nil, prev: nil}
-		head.next = &node[int]{value: 2, next: nil, prev: head}
-		tail := &node[int]{value: 3, next: nil, prev: head.next}
+		head := &Node[int]{value: 1, next: nil, prev: nil}
+		head.next = &Node[int]{value: 2, next: nil, prev: head}
+		tail := &Node[int]{value: 3, next: nil, prev: head.next}
 		q := &Queue[int]{&sync.RWMutex{}, head, tail, 3}
 		got, got1 := q.Dequeue()
 		if q.size != 2 {
@@ -188,7 +188,7 @@ func TestQueue_ForEach(t *testing.T) {
 		q := &Queue[int]{&sync.RWMutex{}, nil, nil, 0}
 		q.Enqueue(1)
 		sum := 0
-		q.ForEach(func(n *node[int]) {
+		q.ForEach(func(n *Node[int]) {
 			sum += n.value
 		})
 		if sum != 1 {
@@ -202,7 +202,7 @@ func TestQueue_ForEach(t *testing.T) {
 		q.Enqueue(3)
 		q.Enqueue(4)
 		sum := 0
-		q.ForEach(func(n *node[int]) {
+		q.ForEach(func(n *Node[int]) {
 			sum += n.value
 		})
 		if sum != 10 {

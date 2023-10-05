@@ -6,16 +6,16 @@ import (
 	"sync"
 )
 
-type node[T any] struct {
-	value T
-	next  *node[T]
-	prev  *node[T]
+type Node[T any] struct {
+	Value T
+	next  *Node[T]
+	prev  *Node[T]
 }
 
 type Queue[T any] struct {
 	mu   *sync.RWMutex
-	head *node[T]
-	tail *node[T]
+	head *Node[T]
+	tail *Node[T]
 	size int
 }
 
@@ -33,15 +33,15 @@ func (q *Queue[T]) Enqueue(value T) {
 	defer q.mu.Unlock()
 	q.size++
 	if q.size == 1 {
-		q.head = &node[T]{
-			value: value,
+		q.head = &Node[T]{
+			Value: value,
 			next:  nil,
 			prev:  nil,
 		}
 		q.tail = q.head
 	} else {
-		q.tail.next = &node[T]{
-			value: value,
+		q.tail.next = &Node[T]{
+			Value: value,
 			next:  nil,
 			prev:  q.tail,
 		}
@@ -50,8 +50,8 @@ func (q *Queue[T]) Enqueue(value T) {
 }
 
 // Dequeue extracts and removes an element from the front of the queue.
-// If the queue is empty, it returns the default value and false.
-// Otherwise, it returns the value from the queue's head and true.
+// If the queue is empty, it returns the default Value and false.
+// Otherwise, it returns the Value from the queue's head and true.
 //
 // Example:
 //
@@ -67,8 +67,8 @@ func (q *Queue[T]) Enqueue(value T) {
 //	fmt.Printf("Current queue: %v\n", q.String()) // Output: Current queue: [1 2 3]
 //
 //	// Dequeue an element from the head of the queue
-//	val, ok := q.Dequeue() // in value 1 ok true
-//	fmt.Printf("Obtaining %s in value %v ok %v\n", q.String(), val, ok) // Output: Obtaining [2 3]
+//	val, ok := q.Dequeue() // in Value 1 ok true
+//	fmt.Printf("Obtaining %s in Value %v ok %v\n", q.String(), val, ok) // Output: Obtaining [2 3]
 func (q *Queue[T]) Dequeue() (T, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -76,7 +76,7 @@ func (q *Queue[T]) Dequeue() (T, bool) {
 		var t T
 		return t, false
 	}
-	res := q.head.value
+	res := q.head.Value
 	q.size--
 	if q.size == 0 {
 		q.head = nil
@@ -115,10 +115,10 @@ func (q *Queue[T]) Peek() (T, bool) {
 		var t T
 		return t, false
 	}
-	return q.head.value, true
+	return q.head.Value, true
 }
 
-func (q *Queue[T]) ForEach(callback func(n *node[T])) {
+func (q *Queue[T]) ForEach(callback func(n *Node[T])) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -130,11 +130,11 @@ func (q *Queue[T]) ForEach(callback func(n *node[T])) {
 func (q *Queue[T]) String() string {
 	var sb strings.Builder
 	sb.WriteRune('[')
-	q.ForEach(func(n *node[T]) {
+	q.ForEach(func(n *Node[T]) {
 		if n == q.head {
-			sb.WriteString(fmt.Sprintf("%v", n.value))
+			sb.WriteString(fmt.Sprintf("%v", n.Value))
 		} else {
-			sb.WriteString(fmt.Sprintf(" %v", n.value))
+			sb.WriteString(fmt.Sprintf(" %v", n.Value))
 		}
 	})
 	sb.WriteRune(']')

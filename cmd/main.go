@@ -28,6 +28,7 @@ type WorkerPool[T any] struct {
 	wg          *sync.WaitGroup
 	ctx         context.Context
 	tasks       chan Task[T]
+	results     chan Result[T]
 }
 
 func NewWorkerPool[T any](ctx context.Context, workerCount int) *WorkerPool[T] {
@@ -36,6 +37,7 @@ func NewWorkerPool[T any](ctx context.Context, workerCount int) *WorkerPool[T] {
 		wg:          &sync.WaitGroup{},
 		ctx:         ctx,
 		tasks:       make(chan Task[T]),
+		results:     make(chan Result[T]),
 	}
 }
 
@@ -56,14 +58,21 @@ func (p *WorkerPool[T]) Add(task Task[T]) {
 func (p *WorkerPool[T]) Wait() {
 	close(p.tasks)
 	p.wg.Wait()
+	close(p.results)
 }
 
 func (p *WorkerPool[T]) Result() Result[T] {
 	if p.ctx.Err() != nil {
 		return Result[T]{Error: p.ctx.Err()}
 	}
-	res := <-p.tasks
-	return res.Result
+	return <-p.results
+}
+
+func (p *WorkerPool[T]) IsCancelled() bool {
+	if errors.Is(p.ctx.Err(), context.Canceled) {
+		return true
+	}
+	return false
 }
 
 func (p *WorkerPool[T]) Task() <-chan Task[T] {
@@ -77,25 +86,24 @@ func (p *WorkerPool[T]) worker() {
 		if p.ctx.Err() != nil {
 			return
 		}
-		task.Result = task.Exec()
-		p.tasks <- task
+		p.results <- task.Exec()
 	}
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
-	pool := NewWorkerPool[int](ctx, 2)
+	pool := NewWorkerPool[int](ctx, 4)
 	pool.Run()
 	for i := 1; i <= 15; i++ {
 		i := i
 		task := NewTask[int](func() Result[int] {
 			fmt.Printf("gorutines count: %v\n", runtime.NumGoroutine())
-			return Result[int]{Ok: i, Error: nil}
+			return Result[int]{Ok: i * i, Error: nil}
 		})
 		pool.Add(task)
 
 		result := pool.Result()
-		if errors.Is(result.Error, context.Canceled) {
+		if pool.IsCancelled() {
 			continue
 		}
 		fmt.Printf("Получен результат обработки задачи %d\n", result.Ok)
