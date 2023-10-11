@@ -1,15 +1,43 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+type Worker struct {
+	Ctx     context.Context
+	Cancel  context.CancelFunc
+	TimeOut *time.Duration
+	Task    func(ctx context.Context)
+}
+
+func NewWorker(ctx context.Context, task func(ctx context.Context), timeOut ...time.Duration) *Worker {
+	var (
+		kill    context.CancelFunc
+		timeout *time.Duration
+	)
+
+	if len(timeOut) > 0 {
+		timeout = &timeOut[0]
+		ctx, kill = context.WithTimeout(ctx, *timeout)
+	}
+
+	return &Worker{Ctx: ctx, TimeOut: timeout, Task: task, Cancel: kill}
+}
+
+func (w *Worker) Kill() {
+	if w.TimeOut != nil {
+		w.Cancel()
+	}
+}
+
 type DynamicBuffer struct {
 	lock          *sync.RWMutex
 	maxBufferSize int
-	buffer        chan Task
+	buffer        chan *Worker
 	cap           int64
 }
 
@@ -17,12 +45,12 @@ func NewDynamicBuffer(initialSize, maxBufferSize int) *DynamicBuffer {
 	return &DynamicBuffer{
 		lock:          &sync.RWMutex{},
 		maxBufferSize: maxBufferSize,
-		buffer:        make(chan Task, initialSize),
+		buffer:        make(chan *Worker, initialSize),
 		cap:           int64(initialSize),
 	}
 }
 
-func (db *DynamicBuffer) Add(task Task) {
+func (db *DynamicBuffer) Add(task *Worker) {
 	db.lock.Lock()
 	canGrow := len(db.buffer) == cap(db.buffer) && cap(db.buffer) < db.maxBufferSize
 	if canGrow {
@@ -32,30 +60,18 @@ func (db *DynamicBuffer) Add(task Task) {
 	db.buffer <- task
 }
 
-func (db *DynamicBuffer) Cap() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-	return cap(db.buffer)
-}
-
-func (db *DynamicBuffer) GetCap() int64 {
+func (db *DynamicBuffer) Cap() int64 {
 	return atomic.LoadInt64(&db.cap)
 }
 
-func (db *DynamicBuffer) Len() int {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
-	return len(db.buffer)
-}
-
-func (db *DynamicBuffer) grow() chan Task {
+func (db *DynamicBuffer) grow() chan *Worker {
 	newCap := cap(db.buffer) * 2
 	if newCap > db.maxBufferSize {
 		newCap = db.maxBufferSize
 	}
 
 	db.cap = int64(newCap)
-	newBuffer := make(chan Task, newCap)
+	newBuffer := make(chan *Worker, newCap)
 	close(db.buffer)
 	for task := range db.buffer {
 		newBuffer <- task
@@ -63,11 +79,9 @@ func (db *DynamicBuffer) grow() chan Task {
 	return newBuffer
 }
 
-type Task func()
-
 type WorkerPool struct {
 	maxWorkers    int
-	waitingTasks  *DynamicBuffer
+	workers       *DynamicBuffer
 	wg            *sync.WaitGroup
 	Len           int64
 	maxBufferSize int64
@@ -79,7 +93,7 @@ func NewPool(maxWorkers, bufferSize int) *WorkerPool {
 	return &WorkerPool{
 		maxWorkers:    maxWorkers,
 		wg:            &sync.WaitGroup{},
-		waitingTasks:  NewDynamicBuffer(2, bufferSize),
+		workers:       NewDynamicBuffer(2, bufferSize),
 		maxBufferSize: int64(bufferSize),
 		spaceCond:     *sync.NewCond(&sync.Mutex{}),
 		semaphore:     make(chan struct{}, bufferSize),
@@ -93,47 +107,42 @@ func (p *WorkerPool) Run() {
 	}
 }
 
-func (p *WorkerPool) Submit(task Task) {
-	//	p.spaceCond.L.Lock()
-	//	for p.IsFull() {
-	//	p.spaceCond.Wait() // ждем оповещения
-	//		println("wait")
-	//	}
+func (p *WorkerPool) Submit(worker *Worker) {
 	if p.IsFull() {
 		<-p.semaphore
 	}
-	p.waitingTasks.Add(task)
+	p.workers.Add(worker)
+	defer worker.Kill()
 	atomic.AddInt64(&p.Len, 1)
-	// p.spaceCond.L.Unlock()
-}
-
-func (p *WorkerPool) IsFull() bool {
-	return atomic.LoadInt64(&p.Len) == p.maxBufferSize
-}
-
-func (p *WorkerPool) hasSpace() bool {
-	return p.waitingTasks.GetCap() == p.maxBufferSize && atomic.LoadInt64(&p.Len)+1 >= p.maxBufferSize
 }
 
 func (p *WorkerPool) worker() {
 	defer p.wg.Done()
 	for {
-		task, ok := <-p.waitingTasks.buffer
+		w, ok := <-p.workers.buffer
 		if !ok {
 			return
 		}
-		task()
+		w.Task(w.Ctx)
 		atomic.AddInt64(&p.Len, -1)
 		if p.hasSpace() {
-			//	p.spaceCond.Broadcast()
-			println("has space")
 			p.semaphore <- struct{}{}
 		}
 	}
 }
 
+func (p *WorkerPool) len() int64 {
+	return atomic.LoadInt64(&p.Len)
+}
+func (p *WorkerPool) IsFull() bool {
+	return atomic.LoadInt64(&p.Len) == p.maxBufferSize
+}
+
+func (p *WorkerPool) hasSpace() bool {
+	return p.workers.Cap() == p.maxBufferSize && p.len() == p.maxBufferSize-1
+}
 func (p *WorkerPool) Wait() {
-	close(p.waitingTasks.buffer)
+	close(p.workers.buffer)
 	p.wg.Wait()
 }
 
@@ -141,28 +150,30 @@ func main() {
 	pool := NewPool(2, 16)
 
 	pool.Run()
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 6; i++ {
 		i := i
-		pool.Submit(func() {
-			println(pool.waitingTasks.Len(), pool.waitingTasks.Cap(), pool.waitingTasks.GetCap())
+		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
+			//println(pool.len(), pool.workers.Cap())
 			time.Sleep(2 * time.Second)
-			println("slow", i)
-			// slow <- i
-		})
-
-		pool.Submit(func() {
-			println(pool.waitingTasks.Len(), pool.waitingTasks.Cap(), pool.waitingTasks.GetCap())
-			println("fast", i)
-		})
-		pool.Submit(func() {
-			println(pool.waitingTasks.Len(), pool.waitingTasks.Cap(), pool.waitingTasks.GetCap())
+			if ctx.Err() != nil {
+				println("slow1 canceled!!!!!!!")
+				return
+			}
+		}, time.Second*1))
+		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
+			//println(pool.len(), pool.workers.Cap())
+			println("fast1", i)
+		}))
+		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
+			//println(pool.len(), pool.workers.Cap())
 			println("fast2", i)
-		})
-		pool.Submit(func() {
+		}))
+		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
+			//println(pool.len(), pool.workers.Cap())
 			time.Sleep(2 * time.Second)
-			println(pool.waitingTasks.Len(), pool.waitingTasks.Cap(), pool.waitingTasks.GetCap())
 			println("slow2", i)
-		})
+		}))
 	}
 	pool.Wait()
+	println("end")
 }
