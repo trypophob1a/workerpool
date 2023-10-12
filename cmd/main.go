@@ -34,58 +34,12 @@ func (w *Worker) Kill() {
 	}
 }
 
-type DynamicBuffer struct {
-	lock          *sync.RWMutex
-	maxBufferSize int
-	buffer        chan *Worker
-	cap           int64
-}
-
-func NewDynamicBuffer(initialSize, maxBufferSize int) *DynamicBuffer {
-	return &DynamicBuffer{
-		lock:          &sync.RWMutex{},
-		maxBufferSize: maxBufferSize,
-		buffer:        make(chan *Worker, initialSize),
-		cap:           int64(initialSize),
-	}
-}
-
-func (db *DynamicBuffer) Add(task *Worker) {
-	db.lock.Lock()
-	canGrow := len(db.buffer) == cap(db.buffer) && cap(db.buffer) < db.maxBufferSize
-	if canGrow {
-		db.buffer = db.grow()
-	}
-	db.lock.Unlock()
-	db.buffer <- task
-}
-
-func (db *DynamicBuffer) Cap() int64 {
-	return atomic.LoadInt64(&db.cap)
-}
-
-func (db *DynamicBuffer) grow() chan *Worker {
-	newCap := cap(db.buffer) * 2
-	if newCap > db.maxBufferSize {
-		newCap = db.maxBufferSize
-	}
-
-	db.cap = int64(newCap)
-	newBuffer := make(chan *Worker, newCap)
-	close(db.buffer)
-	for task := range db.buffer {
-		newBuffer <- task
-	}
-	return newBuffer
-}
-
 type WorkerPool struct {
 	maxWorkers    int
 	workers       *DynamicBuffer
 	wg            *sync.WaitGroup
 	Len           int64
 	maxBufferSize int64
-	spaceCond     sync.Cond
 	semaphore     chan struct{}
 }
 
@@ -95,7 +49,6 @@ func NewPool(maxWorkers, bufferSize int) *WorkerPool {
 		wg:            &sync.WaitGroup{},
 		workers:       NewDynamicBuffer(2, bufferSize),
 		maxBufferSize: int64(bufferSize),
-		spaceCond:     *sync.NewCond(&sync.Mutex{}),
 		semaphore:     make(chan struct{}, bufferSize),
 	}
 }
@@ -147,10 +100,10 @@ func (p *WorkerPool) Wait() {
 }
 
 func main() {
-	pool := NewPool(2, 16)
+	pool := NewPool(2, 20)
 
 	pool.Run()
-	for i := 1; i <= 6; i++ {
+	for i := 1; i <= 5; i++ {
 		i := i
 		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
 			//println(pool.len(), pool.workers.Cap())
@@ -159,7 +112,7 @@ func main() {
 				println("slow1 canceled!!!!!!!")
 				return
 			}
-		}, time.Second*1))
+		}))
 		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {
 			//println(pool.len(), pool.workers.Cap())
 			println("fast1", i)

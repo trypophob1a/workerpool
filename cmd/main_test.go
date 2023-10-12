@@ -3,46 +3,59 @@ package main
 import (
 	"context"
 	"testing"
+
+	"github.com/gammazero/workerpool"
 )
 
-func BenchmarkWithoutPool(b *testing.B) {
+func BenchmarkGammaZeroPool(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for i := 0; i < b.N; i++ {
-			for i := 1; i <= 15; i++ {
-				i := i
-				task := func() Result[int] {
-					//fmt.Printf("gorutines count: %v\n", runtime.NumGoroutine())
-					return Result[int]{Ok: i * i, Error: nil}
-				}
 
-				result := task()
-				result.Ok += result.Ok
-			}
+	for i := 0; i < b.N; i++ {
+		pool := workerpool.New(2)
+		result := make(chan int)
+		result2 := make(chan int)
+		for i := 1; i <= 15; i++ {
+			i := i
+
+			pool.Submit(func() {
+				result <- i * i
+			})
+			pool.Submit(func() {
+				result2 <- i * i
+			})
+			res1 := <-result
+			res1 += res1
+			res2 := <-result2
+			res2 += res2
 		}
+		pool.StopWait()
 	}
 	b.StopTimer()
 }
-func BenchmarkPool(b *testing.B) {
+func BenchmarkMyPool(b *testing.B) {
 	b.ResetTimer()
-	ctx, _ := context.WithCancel(context.Background())
+
 	for i := 0; i < b.N; i++ {
-		pool := NewWorkerPool[int](ctx, 2)
+		pool := NewPool(2, 16)
 		pool.Run()
+		result := make(chan int)
+		result2 := make(chan int)
 		for i := 1; i <= 15; i++ {
 			i := i
-			task := NewTask[int](func() Result[int] {
-				//fmt.Printf("gorutines count: %v\n", runtime.NumGoroutine())
-				return Result[int]{Ok: i * i, Error: nil}
+			task := NewWorker(context.Background(), func(ctx context.Context) {
+				result <- i * i
 			})
-			pool.Add(task)
-
-			result := pool.Result()
-			result.Ok += result.Ok
+			pool.Submit(task)
+			task2 := NewWorker(context.Background(), func(ctx context.Context) {
+				result2 <- i * i
+			})
+			pool.Submit(task2)
+			res := <-result
+			res += res
+			res2 := <-result2
+			res2 += res2
 		}
 		pool.Wait()
 	}
 	b.StopTimer()
 }
-
-type fn[T any] func() Result[T]
