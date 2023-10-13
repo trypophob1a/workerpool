@@ -64,9 +64,11 @@ func (p *WorkerPool) Submit(worker *Worker) {
 	if p.IsFull() {
 		<-p.semaphore
 	}
-	p.workers.Add(worker)
-	defer worker.Kill()
-	atomic.AddInt64(&p.Len, 1)
+	ok := p.workers.Add(worker)
+
+	if ok {
+		atomic.AddInt64(&p.Len, 1)
+	}
 }
 
 func (p *WorkerPool) worker() {
@@ -76,7 +78,11 @@ func (p *WorkerPool) worker() {
 		if !ok {
 			return
 		}
-		w.Task(w.Ctx)
+		func(w *Worker) {
+			defer w.Kill()
+			w.Task(w.Ctx)
+		}(w)
+
 		atomic.AddInt64(&p.Len, -1)
 		if p.hasSpace() {
 			p.semaphore <- struct{}{}

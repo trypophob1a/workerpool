@@ -20,7 +20,11 @@ func NewDynamicBuffer(initialSize, maxBufferSize int) *DynamicBuffer {
 		cap:           int64(initialSize),
 	}
 }
-
+func (db *DynamicBuffer) Buffer() chan *Worker {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+	return db.buffer
+}
 func (db *DynamicBuffer) Add(task *Worker) bool {
 	db.lock.Lock()
 	defer db.lock.Unlock()
