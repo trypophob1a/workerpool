@@ -1,4 +1,4 @@
-package main
+package workerpool
 
 import (
 	"sync"
@@ -22,13 +22,13 @@ func NewDynamicBuffer(initialSize, maxBufferSize int) *DynamicBuffer {
 }
 
 func (db *DynamicBuffer) Add(task *Worker) bool {
-	db.lock.RLock()
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	if len(db.buffer) == db.maxBufferSize {
 		return false
 	}
-	db.lock.RUnlock()
-	db.lock.Lock()
-	defer db.lock.Unlock()
+
 	canGrow := len(db.buffer) == cap(db.buffer) && cap(db.buffer) < db.maxBufferSize
 
 	if canGrow {

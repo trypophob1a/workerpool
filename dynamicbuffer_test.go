@@ -1,7 +1,8 @@
-package main
+package workerpool
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -99,80 +100,89 @@ func TestDynamicBuffer_Add(t *testing.T) {
 }
 
 func TestDynamicBuffer_Cap(t *testing.T) {
-	type fields struct {
-		lock          *sync.RWMutex
-		maxBufferSize int
-		buffer        chan *Worker
-		cap           int64
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		want   int64
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db := &DynamicBuffer{
-				lock:          tt.fields.lock,
-				maxBufferSize: tt.fields.maxBufferSize,
-				buffer:        tt.fields.buffer,
-				cap:           tt.fields.cap,
+	t.Run("empty buffer", func(t *testing.T) {
+		db := &DynamicBuffer{buffer: make(chan *Worker, 2), cap: 2, maxBufferSize: 4}
+		db.buffer <- NewWorker(context.Background(), func(ctx context.Context) {})
+		if db.Cap() != 2 {
+			t.Errorf("expected cap 2, got %d", db.Cap())
+		}
+	})
+	t.Run("Race check", func(t *testing.T) {
+		db := NewDynamicBuffer(2, 2)
+		wg := &sync.WaitGroup{}
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 2; i++ {
+				db.Add(NewWorker(context.Background(), func(ctx context.Context) {}))
 			}
-			if got := db.Cap(); got != tt.want {
-				t.Errorf("Cap() = %v, want %v", got, tt.want)
+		}()
+
+		go func() {
+			defer wg.Done()
+			if db.Cap() != 2 {
+				t.Errorf("expected cap 2, got %d", db.Cap())
 			}
-		})
-	}
+		}()
+		wg.Wait()
+		if db.Cap() != 2 {
+			t.Errorf("expected cap 2, got %d", db.Cap())
+		}
+	})
+
+	t.Run("after grow", func(t *testing.T) {
+		db := NewDynamicBuffer(2, 4)
+		db.Add(NewWorker(context.Background(), func(ctx context.Context) {}))
+		if db.Cap() != 2 {
+			t.Errorf("expected cap 2, got %d", db.Cap())
+		}
+		db.Add(NewWorker(context.Background(), func(ctx context.Context) {}))
+		db.Add(NewWorker(context.Background(), func(ctx context.Context) {}))
+		if db.Cap() != 4 {
+			t.Errorf("expected cap 4, got %d", db.Cap())
+		}
+	})
 }
 
 func TestDynamicBuffer_grow(t *testing.T) {
-	type fields struct {
-		lock          *sync.RWMutex
-		maxBufferSize int
-		buffer        chan *Worker
-		cap           int64
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		want   chan *Worker
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			db := &DynamicBuffer{
-				lock:          tt.fields.lock,
-				maxBufferSize: tt.fields.maxBufferSize,
-				buffer:        tt.fields.buffer,
-				cap:           tt.fields.cap,
-			}
-			if got := db.grow(); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("grow() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	t.Run("empty buffer", func(t *testing.T) {
+		db := NewDynamicBuffer(1, 2)
+		if ok := db.Add(NewWorker(context.Background(), func(ctx context.Context) {})); !ok {
+			t.Errorf("expected true, got false")
+		}
+		ok := db.Add(NewWorker(context.Background(), func(ctx context.Context) {}))
+		if !ok {
+			t.Errorf("expected true, got false")
+		}
+		if db.Cap() != 2 {
+			t.Errorf("expected cap 2, got %d", db.Cap())
+		}
+	})
 }
 
 func TestNewDynamicBuffer(t *testing.T) {
-	type args struct {
-		initialSize   int
-		maxBufferSize int
+	db := NewDynamicBuffer(2, 4)
+
+	expected := &DynamicBuffer{
+		lock:          &sync.RWMutex{},
+		maxBufferSize: 4,
+		buffer:        make(chan *Worker, 2),
+		cap:           2,
 	}
-	tests := []struct {
-		name string
-		args args
-		want *DynamicBuffer
-	}{
-		// TODO: Add test cases.
+
+	if len(expected.buffer) != len(db.buffer) {
+		t.Errorf("expected %d, got %d", len(expected.buffer), len(db.buffer))
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NewDynamicBuffer(tt.args.initialSize, tt.args.maxBufferSize); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewDynamicBuffer() = %v, want %v", got, tt.want)
-			}
-		})
+
+	if expected.maxBufferSize != db.maxBufferSize {
+		t.Errorf("expected %d, got %d", expected.maxBufferSize, db.maxBufferSize)
+	}
+	if expected.cap != db.cap {
+		t.Errorf("expected %d, got %d", expected.cap, db.cap)
+	}
+
+	if T := fmt.Sprintf("%v", reflect.TypeOf(expected.buffer)); T != "chan *workerpool.Worker" {
+		t.Errorf("expected %s, got %s", "chan *workerpool.Worker", T)
 	}
 }

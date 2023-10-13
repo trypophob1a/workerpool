@@ -3,69 +3,98 @@ package workerpool
 import (
 	"context"
 	"sync"
-
-	"github.com/trypophob1a/workerpool/queue"
+	"sync/atomic"
+	"time"
 )
 
-type Result[T any] struct {
-	Ok    T
-	Error error
+type Worker struct {
+	Ctx     context.Context
+	Cancel  context.CancelFunc
+	TimeOut *time.Duration
+	Task    func(ctx context.Context)
 }
 
-type Task[T any] func() Result[T]
+func NewWorker(ctx context.Context, task func(ctx context.Context), timeOut ...time.Duration) *Worker {
+	var (
+		kill    context.CancelFunc
+		timeout *time.Duration
+	)
 
-type WorkerPool[T any] struct {
-	ctx     context.Context
-	wc      int
-	tasks   *queue.Queue[Task[T]]
-	wg      *sync.WaitGroup
-	results chan Result[T]
+	if len(timeOut) > 0 {
+		timeout = &timeOut[0]
+		ctx, kill = context.WithTimeout(ctx, *timeout)
+	}
+
+	return &Worker{Ctx: ctx, TimeOut: timeout, Task: task, Cancel: kill}
 }
 
-func New[T any](ctx context.Context, workerCount int) *WorkerPool[T] {
-	return &WorkerPool[T]{
-		ctx:     ctx,
-		wc:      workerCount,
-		tasks:   queue.NewQueue[Task[T]](),
-		wg:      &sync.WaitGroup{},
-		results: make(chan Result[T], workerCount),
+func (w *Worker) Kill() {
+	if w.TimeOut != nil {
+		w.Cancel()
 	}
 }
 
-func (p *WorkerPool[T]) Run() {
-	for i := 0; i < p.wc; i++ {
+type WorkerPool struct {
+	maxWorkers    int
+	workers       *DynamicBuffer
+	wg            *sync.WaitGroup
+	Len           int64
+	maxBufferSize int64
+	semaphore     chan struct{}
+}
+
+func NewPool(maxWorkers, bufferSize int) *WorkerPool {
+	return &WorkerPool{
+		maxWorkers:    maxWorkers,
+		wg:            &sync.WaitGroup{},
+		workers:       NewDynamicBuffer(2, bufferSize),
+		maxBufferSize: int64(bufferSize),
+		semaphore:     make(chan struct{}, bufferSize),
+	}
+}
+
+func (p *WorkerPool) Run() {
+	for i := 0; i < p.maxWorkers; i++ {
 		p.wg.Add(1)
-		go func() {
-			defer p.wg.Done()
-			p.drainQueue()
-		}()
+		go p.worker()
 	}
 }
 
-func (p *WorkerPool[T]) Add(task Task[T]) {
-	p.tasks.Enqueue(task)
-}
-
-func (p *WorkerPool[T]) Wait(callback func(result Result[T])) {
-	go func() {
-		p.wg.Wait()
-		close(p.results)
-	}()
-	for r := range p.results {
-		callback(r)
+func (p *WorkerPool) Submit(worker *Worker) {
+	if p.IsFull() {
+		<-p.semaphore
 	}
+	p.workers.Add(worker)
+	defer worker.Kill()
+	atomic.AddInt64(&p.Len, 1)
 }
 
-func (p *WorkerPool[T]) drainQueue() {
+func (p *WorkerPool) worker() {
+	defer p.wg.Done()
 	for {
-		if p.ctx.Err() != nil {
-			return
-		}
-
-		task, ok := p.tasks.Dequeue()
+		w, ok := <-p.workers.buffer
 		if !ok {
 			return
 		}
-		p.results <- task()
+		w.Task(w.Ctx)
+		atomic.AddInt64(&p.Len, -1)
+		if p.hasSpace() {
+			p.semaphore <- struct{}{}
+		}
 	}
+}
+
+func (p *WorkerPool) len() int64 {
+	return atomic.LoadInt64(&p.Len)
+}
+func (p *WorkerPool) IsFull() bool {
+	return atomic.LoadInt64(&p.Len) == p.maxBufferSize
+}
+
+func (p *WorkerPool) hasSpace() bool {
+	return p.workers.Cap() == p.maxBufferSize && p.len() == p.maxBufferSize-1
+}
+func (p *WorkerPool) Wait() {
+	close(p.workers.buffer)
+	p.wg.Wait()
 }
