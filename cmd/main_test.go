@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gammazero/workerpool"
+	mypool "github.com/trypophob1a/workerpool"
 )
 
 func BenchmarkGammaZeroPool(b *testing.B) {
@@ -36,17 +37,17 @@ func BenchmarkMyPool(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		pool := NewPool(2, 16)
+		pool := mypool.NewPool(2, 16)
 		pool.Run()
 		result := make(chan int)
 		result2 := make(chan int)
 		for i := 1; i <= 15; i++ {
 			i := i
-			task := NewWorker(context.Background(), func(ctx context.Context) {
+			task := mypool.NewWorker(context.Background(), func(ctx context.Context) {
 				result <- i * i
 			})
 			pool.Submit(task)
-			task2 := NewWorker(context.Background(), func(ctx context.Context) {
+			task2 := mypool.NewWorker(context.Background(), func(ctx context.Context) {
 				result2 <- i * i
 			})
 			pool.Submit(task2)

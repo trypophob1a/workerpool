@@ -16,7 +16,7 @@ func TestNewPool(t *testing.T) {
 		wg:            &sync.WaitGroup{},
 		workers:       NewDynamicBuffer(2, 20),
 		maxBufferSize: 20,
-		semaphore:     make(chan struct{}, 20),
+		waitSpace:     make(chan struct{}, 20),
 	}
 
 	if len(expect.workers.buffer) != len(pool.workers.buffer) {
@@ -213,7 +213,7 @@ func TestWorkerPool_Submit(t *testing.T) {
 		if pool.len() != 2 {
 			t.Errorf("expected false, got true")
 		}
-		pool.semaphore <- struct{}{}
+		pool.waitSpace <- struct{}{}
 		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {}))
 
 		if pool.len() != 2 {
@@ -292,7 +292,7 @@ func TestWorkerPool_hasSpace(t *testing.T) {
 		wg.Wait() // Ожидаем завершения обеих горутин
 		<-pool.workers.buffer
 		pool.Len--
-		if !pool.hasSpace() {
+		if !pool.isSpaceAvailable() {
 			t.Errorf("Expected true, got false")
 		}
 	})
@@ -395,7 +395,7 @@ func TestWorkerPool_worker(t *testing.T) {
 		if pool.len() != 2 {
 			t.Errorf("expected false, got true")
 		}
-		pool.semaphore <- struct{}{}
+		pool.waitSpace <- struct{}{}
 		pool.Submit(NewWorker(context.Background(), func(ctx context.Context) {}))
 
 		if pool.len() != 2 {
