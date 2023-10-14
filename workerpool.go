@@ -140,6 +140,7 @@ func (p *WorkerPool) IsFull() bool {
 func (p *WorkerPool) isSpaceAvailable() bool {
 	return p.workers.Cap() == p.maxBufferSize && p.len() == p.maxBufferSize-1
 }
+
 // Wait blocks until all workers in the worker pool have completed their tasks.
 func (p *WorkerPool) Wait() {
 	close(p.workers.buffer)
